@@ -1,7 +1,11 @@
-# Ad Creator AI
+# ad-creator-ai
 
-AI を使って広告動画を自動生成するツール
+広告動画自動生成のスターター。  
+まずは VOICEVOX エンジンを docker compose で起動して、API が動くか確認します。
 
-- VOICEVOX (音声合成)
-- Shotstack (動画生成)
-- Cloudinary (編集・派生)
+## 起動
+
+```bash
+docker compose up -d
+# → http://127.0.0.1:50021/docs が開けばOK（Swagger）
+```
