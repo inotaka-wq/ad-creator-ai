@@ -3,10 +3,12 @@
 広告動画自動生成のスターター。**ブラウザを開かず**に、コマンドだけで VOICEVOX から WAV を出力する手順をまとめています。
 
 ## 前提
+
 - Docker / Docker Compose がインストール済み
 - このリポジトリ直下に `docker-compose.yml` があること（`ports: 127.0.0.1:50021:50021` 前提）
 
 ## 起動（ブラウザ不要）
+
 ```bash
 docker compose up -d
 docker compose ps
@@ -16,64 +18,85 @@ docker compose ps
 ## 使い方（コマンドだけで WAV 出力）
 
 ### A. Git Bash / WSL / Linux / macOS
+
 ```bash
+# 0) スタイルIDを決める（例：ずんだもん/ノーマル = 3）
+# 一覧を見る：curl -s http://127.0.0.1:50021/speakers #   | jq -r '.[] as $s | $s.styles[] | [$s.name, .name, (.id|tostring)] | @csv'
+SID=3
+
 # 1) 入力テキスト
 echo -n "こんにちは。広告動画のテストです。" > text.txt
 
-# 2) audio_query（JSON生成）
-curl -s -X POST \
-  "http://127.0.0.1:50021/audio_query?text=$(cat text.txt)&speaker=1" \
-  > query.json
+# 2) audio_query（JSON生成; POST + URLエンコード）
+ENC_TEXT=$(python - <<'PY'
+import urllib.parse,sys
+print(urllib.parse.quote(open("text.txt","r",encoding="utf-8").read()))
+PY
+)
+curl -s -X POST "http://127.0.0.1:50021/audio_query?text=$ENC_TEXT&speaker=$SID"   -H "accept: application/json" > query.json
 
 # 3) synthesis（WAV生成）
-curl -s -H "Content-Type: application/json" \
-  -X POST "http://127.0.0.1:50021/synthesis?speaker=1&enable_interrogative_upspeak=true" \
-  -d @query.json > voice.wav
+curl -s -H "Content-Type: application/json"   -X POST "http://127.0.0.1:50021/synthesis?speaker=$SID&enable_interrogative_upspeak=true"   -d @query.json -o voice.wav
 
-# 4) サイズ確認（0でなければOK）
+# 4) サイズ確認
 wc -c voice.wav
 ```
 
 ### B. PowerShell（Windows ネイティブ）
+
 ```powershell
+# 0) スタイルID（例：ずんだもん/ノーマル = 3）
+$SID = 3
+
 # 1) 入力テキスト
 "こんにちは。広告動画のテストです。" | Out-File -Encoding utf8 -NoNewline .\text.txt
 
-# 2) audio_query（JSON生成）
+# 2) audio_query（JSON生成: POST + URLエンコード）
 $txt = Get-Content -Raw .\text.txt
-Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:50021/audio_query?text=$([uri]::EscapeDataString($txt))&speaker=1" |
-  ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 .\query.json
+$enc = [uri]::EscapeDataString($txt)
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:50021/audio_query?text=$enc&speaker=$SID" |
+  ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 .\query.json
 
 # 3) synthesis（WAV生成）
 Invoke-WebRequest -Method Post `
   -ContentType "application/json" `
-  -Uri "http://127.0.0.1:50021/synthesis?speaker=1&enable_interrogative_upspeak=true" `
+  -Uri "http://127.0.0.1:50021/synthesis?speaker=$SID&enable_interrogative_upspeak=true" `
   -InFile .\query.json -OutFile .\voice.wav
 
-# 4) サイズ確認（0でなければOK）
+# 4) サイズ確認
 (Get-Item .\voice.wav).Length
 ```
 
-## よくある調整
-- `speaker` : 声の種類（例: 1 = 四国めたん ノーマル）
-- パラメータ調整は `query.json` の以下を編集  
-  - `speedScale`（話速）, `intonationScale`（抑揚）, `volumeScale`（音量）, `outputSamplingRate`（サンプルレート）
+## スピーカー一覧
 
-スピーカー一覧の取得:
 ```bash
-curl -s http://127.0.0.1:50021/speakers | jq
+curl -s http://127.0.0.1:50021/speakers | jq -r '.[] as $s | $s.styles[] | [$s.name, .name, (.id|tostring)] | @csv'
+# 例出力: "ずんだもん","ノーマル","3"
+# → この "3" を speaker= に使用
 ```
 
 ## ワンライナー（Git Bash / Linux / macOS）
+
 ```bash
-echo -n "こんにちは。広告動画のテストです。" > text.txt && \
-curl -s -X POST "http://127.0.0.1:50021/audio_query?text=$(cat text.txt)&speaker=1" | \
-curl -s -H "Content-Type: application/json" -X POST \
-"http://127.0.0.1:50021/synthesis?speaker=1&enable_interrogative_upspeak=true" \
--d @- > voice.wav && wc -c voice.wav
+SID=3; TEXT='テスト文'; ENC=$(python - <<'PY'
+import urllib.parse;print(urllib.parse.quote("テスト文"))
+PY
+); curl -s -X POST "http://127.0.0.1:50021/audio_query?text=$ENC&speaker=$SID" | curl -s -H "Content-Type: application/json" -X POST   "http://127.0.0.1:50021/synthesis?speaker=$SID&enable_interrogative_upspeak=true"   -d @- -o voice.wav && wc -c voice.wav
+```
+
+## パラメータ調整（query.json を編集）
+
+```bash
+# 話速/音量/音高/抑揚の例
+jq '.speedScale=0.95 | .volumeScale=1.1 | .pitchScale=0.1 | .intonationScale=1.2'   query.json > q.tmp && mv q.tmp query.json
+
+# 語尾を疑問形っぽく
+jq '.accent_phrases[-1].moras[-1].pitch += 0.8'   query.json > q.tmp && mv q.tmp query.json
 ```
 
 ## トラブルシュート
-- `docker compose ps` が `Restarting` の場合：`docker compose logs --tail 100` を確認  
-- `exec: --: invalid option`：`docker-compose.yml` の `command` を削除する（公式既定に任せる）  
-- `0 バイトの WAV`：`query.json` が空か、`synthesis` エラー。`curl` の URL/パラメータを再確認
+
+- {"detail":"Method Not Allowed"} → audio_query を GET している。必ず POST にする
+- Invalid HTTP request → text を URL エンコードしていない
+- 422 Unprocessable Entity → speaker が style_id でない / query.json が壊れている
+- 0 バイトの WAV → query.json が空 / Content-Type ヘッダ忘れ
